@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html class="h-full bg-gray-900 text-white" lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>X DEBATES VIDEO ⚔️</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+</head>
+<body class="h-full">
+
+<!-- Ad overlay -->
+<div id="ad-overlay" class="fixed inset-0 z-50 bg-black flex items-center justify-center" x-data="{t:5,init(){setInterval(()=>this.t>0&&this.t--,1000)}}">
+  <video autoplay muted loop class="rounded-xl max-w-3xl w-full">
+    <source src="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4" type="video/mp4">
+  </video>
+  <div class="absolute bottom-4 right-4 bg-black/80 px-4 py-2 rounded-lg text-xl">
+    <span x-text="t+'s'"></span>
+    <button @click="document.getElementById('ad-overlay').remove()" x-show="t===0" class="ml-4 px-6 py-2 bg-purple-600 rounded">Skip</button>
+  </div>
+</div>
+
+<div class="min-h-screen" x-data="app()" x-init="init()">
+
+  <!-- Landing -->
+  <div x-show="!user.side" class="flex flex-col items-center justify-center min-h-screen text-center px-4">
+    <h1 class="text-8xl font-black bg-gradient-to-r from-red-500 to-blue-500 bg-clip-text text-transparent mb-10">X DEBATES ⚔️</h1>
+    <p class="text-3xl mb-16">60 seconds. Face-to-face. Grok judges.</p>
+    <div class="flex gap-20">
+      <button @click="choose('red')" class="w-72 h-72 rounded-full bg-red-600 hover:scale-110 transition text-9xl shadow-2xl">Red Pill</button>
+      <button @click="choose('blue')" class="w-72 h-72 rounded-full bg-blue-600 hover:scale-110 transition text-9xl shadow-2xl">Blue Pill</button>
+    </div>
+  </div>
+
+  <!-- Video Arena -->
+  <div x-show="matched && !debateEnded" class="p-4 max-w-7xl mx-auto">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
+      <div class="relative bg-black rounded-2xl overflow-hidden">
+        <video id="localVideo" autoplay playsinline muted class="w-full aspect-video object-cover"></video>
+        <div class="absolute bottom-4 left-4 bg-red-600/90 px-4 py-2 rounded-full text-xl">YOU • <span x-text="user.side.toUpperCase()"></span></div>
+      </div>
+      <div class="relative bg-black rounded-2xl overflow-hidden">
+        <video id="remoteVideo" autoplay playsinline class="w-full aspect-video object-cover"></video>
+        <div class="absolute bottom-4 left-4 bg-blue-600/90 px-4 py-2 rounded-full text-xl">OPPONENT • <span x-text="opponentSide.toUpperCase()"></span></div>
+      </div>
+    </div>
+    <div class="grid lg:grid-cols-3 gap-6">
+      <div class="lg:col-span-2 space-y-6">
+        <div class="text-center text-7xl font-bold text-yellow-400" x-text="timer"></div>
+        <div id="messages" class="bg-gray-800 rounded-xl p-6 h-80 overflow-y-auto space-y-3 text-lg"></div>
+        <form @submit.prevent="send" class="flex gap-3">
+          <input x-model="msg" placeholder="Speak or type your truth..." class="flex-1 bg-gray-700 rounded-lg px-6 py-4 text-lg">
+          <button class="px-10 py-4 bg-purple-600 rounded-lg text-xl hover:bg-purple-700">Send</button>
+        </form>
+      </div>
+      <div class="space-y-6">
+        <div class="bg-gray-800 rounded-xl p-6">
+          <h3 class="text-2xl mb-4 flex items-center gap-3">🤖 Grok Fact-Check</h3>
+          <div id="grok" class="text-lg space-y-3"></div>
+        </div>
+        <button @click="showLeaderboard=true" class="w-full py-4 bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl text-2xl">Leaderboard</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Winner -->
+  <div x-show="debateEnded" class="flex flex-col items-center justify-center min-h-screen text-center">
+    <h1 class="text-9xl font-black" :class="winner===user.side?'text-green-500':'text-red-500'" x-text="winner.toUpperCase()+' WINS!'"></h1>
+    <button @click="location.reload()" class="mt-20 px-16 py-8 bg-purple-600 text-4xl rounded-xl">Debate Again</button>
+  </div>
+
+  <!-- Leaderboard Modal -->
+  <div x-show="showLeaderboard" class="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4" @click.self="showLeaderboard=false">
+    <div class="bg-gray-900 rounded-xl p-8 max-w-2xl w-full">
+      <h2 class="text-4xl font-bold mb-6 text-center">Top Debate Gods</h2>
+      <div id="leaderboard-list" class="space-y-4"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const SOCKET_URL = "wss://your-backend-url.com"; // Update after deploy
+const socket = io(SOCKET_URL);
+
+let localStream, pc;
+
+async function startVideo() {
+  localStream = await navigator.mediaDevices.getUserMedia({video:true, audio:true});
+  document.getElementById('localVideo').srcObject = localStream;
+}
+
+function app() {
+  return {
+    user: {name: prompt("Your @username")||"Anon", side:null, badges:[]},
+    matched: false, debateEnded: false, winner:null, timer:60, msg:"", opponentSide:"", showLeaderboard:false,
+    choose(side) { this.user.side = side; socket.emit('join', this.user); startVideo(); },
+    send() { if(this.msg.trim()){ socket.emit('msg', {text:this.msg, ...this.user}); this.msg=''; } },
+    init() {
+      socket.on('matched', data => {
+        this.matched = true; this.opponentSide = data.opponentSide || 'red';
+        this.timer = 60; const t=setInterval(()=>this.timer--<=0&&clearInterval(t),1000);
+      });
+      socket.on('msg', m => {
+        const div = document.createElement('div');
+        div.innerHTML = `<strong class="${m.side==='red'?'text-red-400':'text-blue-400'}">@${m.name}</strong>: ${m.text}`;
+        document.getElementById('messages').appendChild(div); div.scrollIntoView();
+      });
+      socket.on('grok', d => {
+        const el = document.createElement('div'); el.innerHTML = `<strong>${d.verdict}</strong>`;
+        document.getElementById('grok').appendChild(el);
+      });
+      socket.on('winner', w => { this.winner = w; this.debateEnded = true; });
+      socket.on('leaderboard', data => {
+        document.getElementById('leaderboard-list').innerHTML = data.map((p,i) => `<div class="p-4 bg-gray-800 rounded"><span>#${i+1}</span> @${p.username}: ${p.wins} wins</div>`).join('');
+      });
+    }
+  }
+}
+</script>
+</body>
+</html>
